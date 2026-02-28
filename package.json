@@ -12,11 +12,13 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.6",
     "dotenv": "^16.3.1",
     "express": "^4.22.1",
     "humanize-ai-lib": "^1.0.0",
+    "openai": "^6.25.0",
     "paraphrase-sentences": "^1.0.1",
     "quillbot-api": "^1.0.1",
     "rephrase-js": "^1.0.1",

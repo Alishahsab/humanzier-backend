@@ -1,23 +1,82 @@
 const express = require('express');
 const cors = require('cors');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+require('dotenv').config();
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
+// Initialize Gemini with better error handling
+let genAI;
+let model;
+let geminiAvailable = false;
+
+try {
+  const API_KEY = process.env.GEMINI_API_KEY;
+  
+  if (!API_KEY || API_KEY === 'YOUR_GEMINI_API_KEY_HERE') {
+    console.warn('⚠️ Gemini API key not found or using placeholder. Gemini features will use fallback mode.');
+    geminiAvailable = false;
+  } else {
+    genAI = new GoogleGenerativeAI(API_KEY);
+    model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+    geminiAvailable = true;
+    console.log('✅ Gemini initialized successfully');
+  }
+} catch (error) {
+  console.error('❌ Failed to initialize Gemini:', error.message);
+  geminiAvailable = false;
+}
+
+// Enhanced CORS configuration
 app.use(cors({
-  origin: '*',
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With']
 }));
 
 app.options('*', cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Request logging
+app.use((req, res, next) => {
+  console.log(`📥 ${req.method} ${req.url}`);
+  next();
+});
+
 // In-memory storage
 let users = [
   { id: 1, name: 'John Doe', email: 'john@example.com' },
   { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
+];
+
+// Article topics database
+const articleTopics = [
+  { category: 'Technology', topics: ['Artificial Intelligence', 'Machine Learning', 'Blockchain', 'Cybersecurity', 'Cloud Computing', 'Internet of Things', '5G Technology', 'Quantum Computing', 'Virtual Reality', 'Augmented Reality', 'Robotics', 'Autonomous Vehicles'] },
+  { category: 'Business', topics: ['Startup Culture', 'Remote Work', 'Digital Marketing', 'E-commerce Trends', 'Cryptocurrency', 'Investment Strategies', 'Leadership Skills', 'Entrepreneurship', 'Corporate Innovation', 'Market Analysis', 'Brand Building', 'Customer Experience'] },
+  { category: 'Science', topics: ['Climate Change', 'Space Exploration', 'Genetic Engineering', 'Renewable Energy', 'Neuroscience', 'Particle Physics', 'Marine Biology', 'Astrophysics', 'Nanotechnology', 'Biotechnology', 'Environmental Science', 'Scientific Discoveries'] },
+  { category: 'Health', topics: ['Mental Wellness', 'Nutrition Science', 'Fitness Trends', 'Telemedicine', 'Preventive Healthcare', 'Longevity Research', 'Sleep Science', 'Holistic Health', 'Immune System', 'Brain Health', 'Stress Management', 'Healthy Aging'] },
+  { category: 'Lifestyle', topics: ['Minimalism', 'Digital Detox', 'Work-Life Balance', 'Sustainable Living', 'Personal Development', 'Mindfulness', 'Travel Tips', 'Home Decor', 'Fashion Trends', 'Culinary Arts', 'Hobby Ideas', 'Social Connections'] },
+  { category: 'Education', topics: ['Online Learning', 'Skill Development', 'Future of Education', 'Student Success', 'Teaching Methods', 'Educational Technology', 'Career Guidance', 'Lifelong Learning', 'Study Techniques', 'Academic Research', 'Learning Styles', 'Educational Reform'] }
+];
+
+// Article styles for generation
+const articleStyles = [
+  { value: 'professional', label: 'Professional/Business', prompt: 'Write in a professional, business-oriented style with formal language and industry terminology' },
+  { value: 'casual', label: 'Casual/Conversational', prompt: 'Write in a casual, conversational tone like a blog post, using everyday language and engaging the reader directly' },
+  { value: 'academic', label: 'Academic/Research', prompt: 'Write in an academic style with research-backed points, citations, and scholarly language' },
+  { value: 'journalistic', label: 'Journalistic/News', prompt: 'Write in a journalistic style like a news article, with factual reporting and balanced perspectives' },
+  { value: 'storytelling', label: 'Storytelling/Narrative', prompt: 'Write in a storytelling style with narratives, anecdotes, and engaging examples' },
+  { value: 'persuasive', label: 'Persuasive/Marketing', prompt: 'Write in a persuasive, marketing-oriented style that convinces and motivates the reader' }
+];
+
+// Article lengths
+const articleLengths = [
+  { value: 'short', label: 'Short (~300 words)', words: 300 },
+  { value: 'medium', label: 'Medium (~600 words)', words: 600 },
+  { value: 'long', label: 'Long (~1000 words)', words: 1000 },
+  { value: 'detailed', label: 'Detailed (~1500 words)', words: 1500 }
 ];
 
 // ============================================
@@ -611,6 +670,201 @@ const extremeAIDetectorBypass = (text) => {
 };
 
 // ============================================
+// FALLBACK ARTICLE GENERATOR (when Gemini is unavailable)
+// ============================================
+const generateFallbackArticle = (title, style, length) => {
+  const selectedLength = articleLengths.find(l => l.value === length) || articleLengths[1];
+  const wordCount = selectedLength.words;
+  
+  const templates = {
+    introduction: [
+      `The topic of "${title}" has garnered significant attention in recent years.`,
+      `When we examine "${title}" closely, we uncover fascinating insights.`,
+      `Understanding "${title}" is crucial in today's rapidly evolving landscape.`,
+      `The importance of "${title}" cannot be overstated in modern discourse.`
+    ],
+    body: [
+      `One of the key aspects of "${title}" is its multifaceted nature. Experts have identified numerous factors that contribute to its significance, ranging from practical applications to theoretical implications.`,
+      
+      `Research indicates that "${title}" plays a vital role in shaping outcomes across various domains. Organizations and individuals alike are recognizing the need to understand and leverage its potential.`,
+      
+      `The implications of "${title}" extend far beyond surface-level understanding. Deep analysis reveals connections to broader trends and patterns that influence decision-making processes.`,
+      
+      `Case studies demonstrate that successful implementation of concepts related to "${title}" leads to measurable improvements in efficiency and effectiveness. These real-world examples provide valuable lessons for practitioners.`,
+      
+      `Looking at historical context, we can trace the evolution of "${title}" and its impact on society. This perspective helps us appreciate both its current relevance and future potential.`
+    ],
+    conclusion: [
+      `In conclusion, "${title}" represents a fascinating area of study with far-reaching implications.`,
+      `As we continue to explore "${title}", new opportunities for innovation and understanding emerge.`,
+      `The journey of understanding "${title}" is ongoing, and its importance will only grow over time.`
+    ]
+  };
+
+  let article = [];
+  
+  // Add introduction
+  article.push(templates.introduction[Math.floor(Math.random() * templates.introduction.length)]);
+  article.push('');
+  
+  // Add body paragraphs (based on length)
+  const numParagraphs = length === 'short' ? 2 : length === 'medium' ? 3 : 4;
+  for (let i = 0; i < numParagraphs; i++) {
+    article.push(templates.body[Math.floor(Math.random() * templates.body.length)]);
+    article.push('');
+  }
+  
+  // Add conclusion
+  article.push(templates.conclusion[Math.floor(Math.random() * templates.conclusion.length)]);
+  
+  return article.join('\n');
+};
+
+// ============================================
+// GEMINI ARTICLE GENERATION FUNCTION (with fallback)
+// ============================================
+const generateArticleWithGemini = async (title, style = 'professional', length = 'medium', additionalInstructions = '') => {
+  try {
+    // If Gemini is not available, use fallback
+    if (!geminiAvailable || !model) {
+      console.log('⚠️ Gemini not available, using fallback generator');
+      return generateFallbackArticle(title, style, length);
+    }
+
+    // Find the selected style and length
+    const selectedStyle = articleStyles.find(s => s.value === style) || articleStyles[0];
+    const selectedLength = articleLengths.find(l => l.value === length) || articleLengths[1];
+    
+    // Construct the prompt
+    let prompt = `Write a comprehensive article about "${title}".\n\n`;
+    prompt += `Style: ${selectedStyle.prompt}.\n`;
+    prompt += `Length: Approximately ${selectedLength.words} words.\n`;
+    prompt += `Structure: Include an engaging introduction, 3-5 body paragraphs with subheadings, and a strong conclusion.\n`;
+    prompt += `Make it informative, well-researched, and engaging for readers.\n`;
+    
+    if (additionalInstructions) {
+      prompt += `\nAdditional instructions: ${additionalInstructions}\n`;
+    }
+    
+    prompt += `\nFormat the article with clear paragraphs. Do not include a title in the response as the title is provided separately.`;
+
+    console.log('📝 Generating article with Gemini...');
+    
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const generatedArticle = response.text();
+
+    console.log('✅ Article generated successfully with Gemini');
+    
+    return generatedArticle;
+  } catch (error) {
+    console.error('❌ Error generating article with Gemini:', error);
+    console.log('⚠️ Falling back to template generator');
+    return generateFallbackArticle(title, style, length);
+  }
+};
+
+// ============================================
+// GENERATE AND BYPASS WITH GEMINI
+// ============================================
+const generateAndBypassWithGemini = async (title, style, length, additionalInstructions) => {
+  // Step 1: Generate the article using Gemini (or fallback)
+  const generatedArticle = await generateArticleWithGemini(title, style, length, additionalInstructions);
+  
+  // Step 2: Apply the 15-stage bypass to make it undetectable
+  const humanizedArticle = extremeAIDetectorBypass(generatedArticle);
+  
+  return {
+    title: title,
+    style: style,
+    length: length,
+    original: generatedArticle,
+    humanized: humanizedArticle
+  };
+};
+
+// ============================================
+// PRE-DEFINED TOPICS GENERATOR (using templates)
+// ============================================
+const generateArticle = (topic, category, length = 'medium') => {
+  // Article templates for generation
+  const articleTemplates = {
+    introduction: [
+      "In recent years, {topic} has emerged as a transformative force in {category}.",
+      "The landscape of {category} is rapidly evolving, with {topic} at the forefront of this change.",
+      "When we examine {category} closely, one trend stands out above the rest: {topic}.",
+      "Experts in {category} have long anticipated the rise of {topic}, and now it's finally here.",
+      "The conversation around {category} has shifted dramatically, largely due to advancements in {topic}."
+    ],
+    
+    body: [
+      "One of the most significant aspects of {topic} is its ability to address longstanding challenges in {category}. Traditional approaches often fall short when dealing with complex scenarios, but {topic} introduces novel solutions that were previously unimaginable.",
+      
+      "What makes {topic} particularly compelling is its versatility. In the context of {category}, it can be applied across multiple domains, from basic applications to advanced implementations.",
+      
+      "Consider the practical implications: organizations that embrace {topic} are seeing measurable improvements in efficiency and outcomes. Meanwhile, those who hesitate risk falling behind.",
+      
+      "The human element cannot be ignored when discussing {topic} in {category}. Behind every technological advancement, there are people whose lives are being transformed.",
+      
+      "From a strategic perspective, understanding {topic} requires a multidisciplinary approach. It draws insights from various fields, creating a rich tapestry of knowledge."
+    ],
+    
+    conclusion: [
+      "As we look to the future, it's clear that {topic} will continue to shape {category} in profound ways.",
+      "The journey of exploring {topic} within {category} is just beginning. Those who engage with it thoughtfully will be well-positioned to thrive.",
+      "Ultimately, the success of {topic} in {category} will depend on how well we integrate it with human values and needs.",
+      "What we're witnessing with {topic} is just the beginning. As technology advances, the possibilities for {category} seem virtually limitless."
+    ]
+  };
+
+  // Determine article length
+  let numBodyParagraphs = 3; // medium default
+  if (length === 'short') numBodyParagraphs = 2;
+  if (length === 'long') numBodyParagraphs = 5;
+
+  // Build article parts
+  let articleParts = [];
+
+  // Add introduction
+  const introTemplate = articleTemplates.introduction[Math.floor(Math.random() * articleTemplates.introduction.length)];
+  articleParts.push(introTemplate.replace('{topic}', topic).replace('{category}', category));
+  articleParts.push('');
+
+  // Add body paragraphs
+  for (let i = 0; i < numBodyParagraphs; i++) {
+    const bodyTemplate = articleTemplates.body[Math.floor(Math.random() * articleTemplates.body.length)];
+    let paragraph = bodyTemplate.replace(/{topic}/g, topic).replace(/{category}/g, category);
+    articleParts.push(paragraph);
+    articleParts.push('');
+  }
+
+  // Add conclusion
+  const conclusionTemplate = articleTemplates.conclusion[Math.floor(Math.random() * articleTemplates.conclusion.length)];
+  articleParts.push(conclusionTemplate.replace('{topic}', topic).replace('{category}', category));
+
+  return articleParts.join('\n');
+};
+
+// ============================================
+// GENERATE PRE-DEFINED AND BYPASS
+// ============================================
+const generateAndBypassPredefined = (topic, category, length = 'medium') => {
+  // Step 1: Generate the article using templates
+  const generatedArticle = generateArticle(topic, category, length);
+  
+  // Step 2: Apply the 15-stage bypass to make it undetectable
+  const humanizedArticle = extremeAIDetectorBypass(generatedArticle);
+  
+  return {
+    topic: topic,
+    category: category,
+    length: length,
+    original: generatedArticle,
+    humanized: humanizedArticle
+  };
+};
+
+// ============================================
 // ORIGINAL FUNCTIONS (kept for backward compatibility)
 // ============================================
 const removeAllDashes = (text) => {
@@ -882,7 +1136,9 @@ app.get('/', (req, res) => {
       '❓ Rhetorical questions',
       '📌 Parenthetical asides',
       '🔤 Subtle typo insertion',
-      '✂️ 50+ natural contractions'
+      '✂️ 50+ natural contractions',
+      '📝 NEW: Gemini Article Generator (Enter Title, Get Auto-Bypassed Article)',
+      '🔄 Fallback Mode: Works without API key!'
     ],
     endpoints: [
       '/api/test - Test connection',
@@ -890,6 +1146,11 @@ app.get('/', (req, res) => {
       '/api/extreme-bypass - 15-Stage Extreme Bypass (BEST)',
       '/api/ultimate-bypass-10x - 10-Stage Ultimate Bypass',
       '/api/ultimate-bypass - 7-Stage Ultimate Bypass',
+      '/api/generate-article-gemini - Generate Article with Gemini + Auto-Bypass (NEW)',
+      '/api/generate-article - Generate from Pre-defined Topics + Auto-Bypass',
+      '/api/article-styles - Get Available Styles',
+      '/api/article-lengths - Get Available Lengths',
+      '/api/article-topics - Get Available Topics',
       '/api/humanize - Professional humanizer',
       '/api/simple-humanize - Basic humanization',
       '/api/rephrase-news - CNN style news',
@@ -909,12 +1170,139 @@ app.get('/api/test', (req, res) => {
     success: true, 
     message: 'Extreme 15-Stage Bypass API connected!',
     version: '8.0',
+    geminiAvailable: geminiAvailable,
     timestamp: new Date().toISOString()
   });
 });
 
 app.get('/api/ping', (req, res) => {
   res.json({ success: true, message: 'pong' });
+});
+
+// Get available article styles
+app.get('/api/article-styles', (req, res) => {
+  res.json({
+    success: true,
+    data: articleStyles
+  });
+});
+
+// Get available article lengths
+app.get('/api/article-lengths', (req, res) => {
+  res.json({
+    success: true,
+    data: articleLengths
+  });
+});
+
+// Get available article topics
+app.get('/api/article-topics', (req, res) => {
+  res.json({
+    success: true,
+    data: articleTopics
+  });
+});
+
+// NEW: Generate article with Gemini and auto-bypass (with fallback)
+app.post('/api/generate-article-gemini', async (req, res) => {
+  try {
+    const { title, style, length, additionalInstructions } = req.body;
+    
+    if (!title || typeof title !== 'string' || !title.trim()) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Please provide a title for the article' 
+      });
+    }
+
+    console.log(`📝 Generating article for title: "${title}"`);
+    console.log(`📊 Gemini Available: ${geminiAvailable}`);
+
+    const result = await generateAndBypassWithGemini(
+      title, 
+      style || 'professional', 
+      length || 'medium', 
+      additionalInstructions || ''
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        title: result.title,
+        style: result.style,
+        length: result.length,
+        original: result.original,
+        humanized: result.humanized,
+        stats: {
+          originalWords: result.original.split(' ').length,
+          humanizedWords: result.humanized.split(' ').length,
+          originalChars: result.original.length,
+          humanizedChars: result.humanized.length
+        },
+        geminiUsed: geminiAvailable
+      }
+    });
+  } catch (err) {
+    console.error('Error in article generation:', err);
+    res.status(500).json({ 
+      success: false, 
+      error: err.message || 'Failed to generate article. Using fallback mode.' 
+    });
+  }
+});
+
+// Generate from pre-defined topics and auto-bypass
+app.post('/api/generate-article', (req, res) => {
+  try {
+    const { topic, category, length } = req.body;
+    
+    if (!topic || !category) {
+      // If no specific topic/category provided, pick random ones
+      const randomCategory = articleTopics[Math.floor(Math.random() * articleTopics.length)];
+      const randomTopic = randomCategory.topics[Math.floor(Math.random() * randomCategory.topics.length)];
+      
+      const result = generateAndBypassPredefined(randomTopic, randomCategory.category, length || 'medium');
+      
+      return res.json({
+        success: true,
+        data: {
+          topic: result.topic,
+          category: result.category,
+          original: result.original,
+          humanized: result.humanized,
+          stats: {
+            originalWords: result.original.split(' ').length,
+            humanizedWords: result.humanized.split(' ').length,
+            originalChars: result.original.length,
+            humanizedChars: result.humanized.length
+          }
+        }
+      });
+    }
+
+    const result = generateAndBypassPredefined(topic, category, length || 'medium');
+    
+    res.json({
+      success: true,
+      data: {
+        topic: result.topic,
+        category: result.category,
+        original: result.original,
+        humanized: result.humanized,
+        stats: {
+          originalWords: result.original.split(' ').length,
+          humanizedWords: result.humanized.split(' ').length,
+          originalChars: result.original.length,
+          humanizedChars: result.humanized.length
+        }
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ 
+      success: false, 
+      error: err.message 
+    });
+  }
 });
 
 // EXTREME 15-STAGE BYPASS ENDPOINT
@@ -1176,7 +1564,8 @@ app.get('/api/health', (req, res) => {
     success: true,
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    geminiAvailable: geminiAvailable
   });
 });
 
@@ -1205,8 +1594,15 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('='.repeat(90));
   console.log(`📍 URL: http://localhost:${PORT}`);
   console.log('='.repeat(90));
-  console.log(`\n📝 RECOMMENDED ENDPOINT:`);
-  console.log(`   POST http://localhost:${PORT}/api/extreme-bypass`);
+  console.log(`\n📝 GEMINI STATUS: ${geminiAvailable ? '✅ Available' : '⚠️ Not Available (Using Fallback Mode)'}`);
+  console.log('='.repeat(90));
+  console.log(`\n📝 RECOMMENDED ENDPOINTS:`);
+  console.log(`   POST http://localhost:${PORT}/api/extreme-bypass - Humanize existing text`);
+  console.log(`   POST http://localhost:${PORT}/api/generate-article-gemini - Generate Article (Auto-Bypassed)`);
+  console.log(`   POST http://localhost:${PORT}/api/generate-article - Generate from Pre-defined Topics`);
+  console.log('='.repeat(90));
+  console.log(`\n✅ NEW FEATURE: Fallback Mode - Works without API key!`);
+  console.log(`   If Gemini API key is missing, it will use template-based generation`);
   console.log('='.repeat(90));
   console.log(`\n✅ 15-STAGE PROCESSING:`);
   console.log(`   1.  Extreme Cleaning`);
